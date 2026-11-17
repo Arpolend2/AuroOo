@@ -140,6 +140,7 @@ class QmlWheelTests : public QObject
     }
 
 private slots:
+#ifndef NAVIGATION_TESTS_ONLY
     void russianCatalogLoads()
     {
         QTranslator translator;
@@ -551,6 +552,87 @@ private slots:
                  loader->property("item").value<QObject *>());
     }
 
+#else
+    void mouseNavigation_data()
+    {
+        QTest::addColumn<int>("orientation");
+        QTest::newRow("portrait") << int(Qt::PortraitOrientation);
+        QTest::newRow("landscape") << int(Qt::LandscapeOrientation);
+    }
+
+    void mouseNavigation()
+    {
+        QFETCH(int, orientation);
+        ProgressClient client;
+        QQuickView view;
+        view.rootContext()->setContextProperty(QStringLiteral("nextcloudClient"), &client);
+        view.setResizeMode(QQuickView::SizeRootObjectToView);
+        view.resize(1200, 800);
+        const QDir source = QFileInfo(QStringLiteral(WHEEL_FIXTURE_PATH)).dir();
+        view.setSource(QUrl::fromLocalFile(source.absoluteFilePath(
+            QStringLiteral("../../qml/pages/FilesPage.qml"))));
+        QVERIFY2(view.status() == QQuickView::Ready, qPrintable(view.errors().isEmpty()
+                 ? QString() : view.errors().first().toString()));
+        QQuickItem *page = view.rootObject();
+        QVERIFY(page);
+        page->setVisible(true);
+        page->setProperty("orientation", orientation);
+        QQuickItem *split = findVisualItem(page, QStringLiteral("fileBrowserSplitView"));
+        QVERIFY(split);
+        QQuickItem *rootPanel = nullptr;
+        QTRY_VERIFY((rootPanel = findVisualItem(page, QStringLiteral("fileBrowserPanel"))));
+        QVERIFY(QMetaObject::invokeMethod(rootPanel, "folderActivated",
+                    Q_ARG(QString, QStringLiteral("folder")), Q_ARG(QString, QString())));
+        QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder"));
+        QQuickItem *child = qobject_cast<QQuickItem *>(
+            QQmlExpression(QQmlEngine::contextForObject(page), page,
+                           QStringLiteral("splitView.get(1)")).evaluate().value<QObject *>());
+        QVERIFY(child);
+        QVERIFY(QMetaObject::invokeMethod(child, "folderActivated",
+                    Q_ARG(QString, QStringLiteral("folder/sub")),
+                    Q_ARG(QString, QStringLiteral("folder"))));
+        QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder/sub"));
+        QQuickItem *hitArea = findVisualItem(page, QStringLiteral("historyButtons"));
+        QVERIFY(hitArea);
+        QVERIFY(hitArea->isVisible());
+        QCOMPARE(hitArea->acceptedMouseButtons(), Qt::MouseButtons(Qt::BackButton | Qt::ForwardButton));
+        QTest::mouseClick(&view, Qt::BackButton, Qt::NoModifier, QPoint(100, 400));
+        QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder"));
+        QCOMPARE(split->property("count").toInt(), 2);
+        QTest::mouseClick(&view, Qt::BackButton, Qt::NoModifier, QPoint(100, 400));
+        QTRY_COMPARE(page->property("activePath").toString(), QString());
+        QCOMPARE(split->property("count").toInt(), 1);
+        QTest::mouseClick(&view, Qt::BackButton, Qt::NoModifier, QPoint(100, 400));
+        QCOMPARE(page->property("activePath").toString(), QString());
+        QTest::mouseClick(&view, Qt::ForwardButton, Qt::NoModifier, QPoint(100, 400));
+        QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder"));
+        QTest::mouseClick(&view, Qt::ForwardButton, Qt::NoModifier, QPoint(100, 400));
+        QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder/sub"));
+        QCOMPARE(split->property("count").toInt(), 3);
+        QTest::mouseClick(&view, Qt::BackButton, Qt::NoModifier, QPoint(100, 400));
+        QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder"));
+        child = qobject_cast<QQuickItem *>(
+            QQmlExpression(QQmlEngine::contextForObject(page), page,
+                           QStringLiteral("splitView.get(1)")).evaluate().value<QObject *>());
+        QVERIFY(child);
+        QVERIFY(QMetaObject::invokeMethod(child, "folderActivated",
+                    Q_ARG(QString, QStringLiteral("folder/other")),
+                    Q_ARG(QString, QStringLiteral("folder"))));
+        QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder/other"));
+        QTest::mouseClick(&view, Qt::ForwardButton, Qt::NoModifier, QPoint(100, 400));
+        QCOMPARE(page->property("activePath").toString(), QStringLiteral("folder/other"));
+        QQmlExpression pop(QQmlEngine::contextForObject(page), page,
+                           QStringLiteral("splitView.pop(splitView.get(1), SplitView.Immediate)"));
+        pop.evaluate();
+        QVERIFY2(!pop.hasError(), qPrintable(pop.error().toString()));
+        QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder"));
+        QTest::mouseClick(&view, Qt::BackButton, Qt::NoModifier, QPoint(100, 400));
+        QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder/other"));
+        QTest::qWait(400);
+    }
+
+#endif
+#ifndef NAVIGATION_TESTS_ONLY
     void openFolderHighlightedOnlyWhileNextPanelExists()
     {
         ProgressClient client;
@@ -714,6 +796,7 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(remorse, "trigger"));
         QCOMPARE(client.deletedPath, QStringLiteral("file.txt"));
     }
+#endif
 };
 
 QTEST_MAIN(QmlWheelTests)

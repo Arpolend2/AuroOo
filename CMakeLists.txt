@@ -60,6 +60,9 @@ install(DIRECTORY qml
 install(FILES ${TRANSLATION_FILES}
     DESTINATION share/ru.auroraos.NextcloudFiles/translations
 )
+install(FILES LICENSES/UIComponentGallery-BSD-3-Clause.txt
+    DESTINATION share/ru.auroraos.NextcloudFiles/licenses
+)
 install(FILES ru.auroraos.NextcloudFiles.desktop
     DESTINATION share/applications
 )
@@ -73,6 +76,7 @@ file(WRITE "${CMAKE_BINARY_DIR}/QtCreatorDeployment.txt"
 
 add_custom_target(distfiles SOURCES
     README.md
+    LICENSES/UIComponentGallery-BSD-3-Clause.txt
     translations/nextaurocloud_ru.ts
     CMakeLists.txt
     ru.auroraos.NextcloudFiles.desktop
@@ -144,6 +148,15 @@ if(BUILD_QML_WHEEL_TESTS)
     add_dependencies(qmlwheel_tests translations)
     target_link_libraries(qmlwheel_tests Qt5::Core Qt5::Gui Qt5::Qml Qt5::Quick Qt5::Test)
     add_test(NAME qmlwheel_tests COMMAND qmlwheel_tests)
+
+    # Keep native SplitView navigation in its own headless Qt process.
+    add_executable(qmlnavigation_tests tests/qmlwheel_tests.cpp)
+    target_compile_definitions(qmlnavigation_tests PRIVATE
+        NAVIGATION_TESTS_ONLY
+        WHEEL_FIXTURE_PATH="${CMAKE_SOURCE_DIR}/tests/qml/wheelfixture.qml"
+        RUSSIAN_CATALOG_PATH="${CMAKE_CURRENT_BINARY_DIR}/nextaurocloud_ru.qm")
+    target_link_libraries(qmlnavigation_tests Qt5::Core Qt5::Gui Qt5::Qml Qt5::Quick Qt5::Test)
+    add_test(NAME qmlnavigation_tests COMMAND qmlnavigation_tests)
 endif()
 
 option(BUILD_SECURE_STORAGE_TESTS "Build secure-storage login regression tests" OFF)
