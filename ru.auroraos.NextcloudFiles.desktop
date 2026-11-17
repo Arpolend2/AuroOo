@@ -1,0 +1,22 @@
+[Desktop Entry]
+Type=Application
+Name=AuroOo
+Name[ru]=АвроОо
+Comment=Nextcloud file browser
+Comment[ru]=Файловый менеджер Nextcloud
+Icon=ru.auroraos.NextcloudFiles
+Exec=ru.auroraos.NextcloudFiles
+X-Nemo-Application-Type=silica-qt5
+
+[X-Application]
+Permissions=Internet;SecureStorage;UserDirs;MediaIndexing
+OrganizationName=ru.auroraos
+ApplicationName=NextcloudFiles
+
+[X-Aurora-Application]
+Orientation=All
+IconMode=Crop
+
+[X-Task NextcloudSync]
+Type=periodic
+Permissions=Internet;SecureStorage

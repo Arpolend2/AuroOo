@@ -1,0 +1,6 @@
+/build/
+/.apptool/
+/RPMS/
+/Testing/
+CMakeLists.txt.user*
+*.qm
