@@ -1,6 +1,6 @@
 Name:       ru.auroraos.NextcloudFiles
 Summary:    AuroOo file browser
-Version:    1.0
+Version:    1.1
 Release:    1
 Group:      Qt/Qt
 License:    Proprietary

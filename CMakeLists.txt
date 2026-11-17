@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(ru.auroraos.NextcloudFiles VERSION 1.0 LANGUAGES CXX)
+project(ru.auroraos.NextcloudFiles VERSION 1.1 LANGUAGES CXX)
 
 find_package(Qt5 COMPONENTS Core Gui Network Qml Quick DBus REQUIRED)
 find_package(Qt5LinguistTools REQUIRED)
