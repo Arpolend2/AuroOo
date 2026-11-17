@@ -2,6 +2,8 @@
 
 Current release: **1.0**.
 
+This app is fully vibe-coded.
+
 An independently developed Nextcloud file browser for Aurora OS. It uses HTTPS WebDAV
 to browse folders, opens files with the system's default application, and can
 keep selected files or entire folders available in the app's private storage.
