@@ -173,6 +173,35 @@ private slots:
                  QString::fromUtf8("Открыта сохранённая копия. Она может быть старее версии на сервере."));
     }
 
+    void pulleyShowsAppInformation()
+    {
+        const QString previousVersion = QCoreApplication::applicationVersion();
+        QCoreApplication::setApplicationVersion(QStringLiteral("test-version"));
+        ProgressClient client;
+        QQuickView panel;
+        panel.rootContext()->setContextProperty(QStringLiteral("nextcloudClient"), &client);
+        panel.setResizeMode(QQuickView::SizeRootObjectToView);
+        panel.resize(320, 800);
+        const QDir source = QFileInfo(QStringLiteral(WHEEL_FIXTURE_PATH)).dir();
+        panel.setSource(QUrl::fromLocalFile(source.absoluteFilePath(
+            QStringLiteral("../../qml/pages/FileBrowserPanel.qml"))));
+        QVERIFY2(panel.status() == QQuickView::Ready, qPrintable(panel.errors().isEmpty()
+                 ? QString() : panel.errors().first().toString()));
+        QQuickItem *loader = findVisualItem(panel.rootObject(), QStringLiteral("pulleyLoader"));
+        QVERIFY(loader);
+        QObject *menu = loader->property("item").value<QObject *>();
+        QVERIFY(menu);
+        QQuickItem *info = menu->findChild<QQuickItem *>(QStringLiteral("appInfoMenuLabel"));
+        QQuickItem *storage = menu->findChild<QQuickItem *>(QStringLiteral("storageQuotaMenuLabel"));
+        QVERIFY(info);
+        QVERIFY(storage);
+        QCOMPARE(info->property("text").toString(),
+                 QStringLiteral("AuroOo test-version\ngithub.com/Arpolend2/AuroOo"));
+        QCOMPARE(info->parentItem(), storage->parentItem());
+        QVERIFY(info->y() < storage->y());
+        QCoreApplication::setApplicationVersion(previousVersion);
+    }
+
     void loadApplicationComponents()
     {
         QQmlEngine engine;

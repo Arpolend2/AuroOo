@@ -43,6 +43,10 @@ Item {
                         objectName: "browserPullDownMenu"
                         flickable: fileList
                         MenuLabel {
+                            objectName: "appInfoMenuLabel"
+                            text: "AuroOo " + Qt.application.version + "\ngithub.com/Arpolend2/AuroOo"
+                        }
+                        MenuLabel {
                             objectName: "storageQuotaMenuLabel"
                             text: {
                                 var quota = nextcloudClient.storageQuota
