@@ -4,6 +4,7 @@ A fully vibe-coded Nextcloud file manager for Aurora OS.
 - Browse and open files in native apps, with tablet split view and mouse back/forward navigation.
 - Upload, download, rename and delete files; view storage usage and sharing indicators.
 - Pin files and folders for one-way offline sync; local edits are never automatically uploaded.
+- On restart, saved folders open while sign-in reconnects; pinned files and verified previously opened copies can be opened offline (the latter may be outdated).
 - Background sync is best-effort, scheduled at intervals of at least 15 minutes.
 - Sign in through Nextcloud; the app token is stored unencrypted in app-private storage.
 - The interface is available in English and Russian.

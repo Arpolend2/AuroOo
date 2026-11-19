@@ -38,13 +38,13 @@ int main(int argc, char *argv[])
     dispatcher->onApplicationStarted(
         [&application, &view, &nextcloudClient]() {
         nextcloudClient.reset(new NextcloudClient);
+        nextcloudClient->resumeLogin();
         view.reset(Aurora::Application::createView());
         view->rootContext()->setContextProperty(
             QStringLiteral("nextcloudClient"), nextcloudClient.data());
         view->setSource(Aurora::Application::pathTo(
             QStringLiteral("qml/NextcloudFiles.qml")));
         view->show();
-        QTimer::singleShot(0, nextcloudClient.data(), &NextcloudClient::resumeLogin);
     });
 
     return application->exec();

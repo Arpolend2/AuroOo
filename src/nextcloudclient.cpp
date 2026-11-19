@@ -143,6 +143,16 @@ bool safeRemoteName(const QString &name)
     return true;
 }
 
+bool isConnectionFailure(QNetworkReply::NetworkError error)
+{
+    return error == QNetworkReply::ConnectionRefusedError
+        || error == QNetworkReply::RemoteHostClosedError
+        || error == QNetworkReply::HostNotFoundError
+        || error == QNetworkReply::TimeoutError
+        || error == QNetworkReply::TemporaryNetworkFailureError
+        || error == QNetworkReply::NetworkSessionFailedError;
+}
+
 } // namespace
 
 NextcloudClient::NextcloudClient(QObject *parent, QNetworkAccessManager *network)
@@ -153,6 +163,7 @@ NextcloudClient::NextcloudClient(QObject *parent, QNetworkAccessManager *network
       m_syncPinRevision(0),
       m_busy(false),
       m_authenticated(false),
+      m_restoreOffline(false),
       m_syncing(false),
       m_offlineLoginAllowed(false),
       m_secureStoreAlreadyOpened(false),
@@ -176,9 +187,12 @@ NextcloudClient::NextcloudClient(QObject *parent, QNetworkAccessManager *network
             this, &NextcloudClient::backgroundSyncTimedOut);
     m_pinReconcileTimer.setSingleShot(true);
     connect(&m_pinReconcileTimer, &QTimer::timeout, this, [this]() {
-        if (m_authenticated && m_persistentFeaturesAvailable && !m_syncing)
+        if (onlineReady() && m_persistentFeaturesAvailable && !m_syncing)
             startSync();
     });
+    m_reconnectTimer.setSingleShot(true);
+    m_reconnectTimer.setInterval(60000);
+    connect(&m_reconnectTimer, &QTimer::timeout, this, &NextcloudClient::retryConnection);
     m_backgroundProgressTimer.setInterval(1000);
     connect(&m_backgroundProgressTimer, &QTimer::timeout,
             this, &NextcloudClient::readBackgroundProgress);
@@ -189,7 +203,7 @@ NextcloudClient::NextcloudClient(QObject *parent, QNetworkAccessManager *network
         }
         updateBackgroundTaskState(state);
         if (state == RuntimeManager::Task::NotRunning
-            && m_authenticated && !m_isBackgroundSync && !pinMap().isEmpty())
+            && onlineReady() && !m_isBackgroundSync && !pinMap().isEmpty())
             configureBackgroundTask();
         if (!m_authenticated || !m_persistentFeaturesAvailable || pinMap().isEmpty()
             || (state != RuntimeManager::Task::Waiting
@@ -211,6 +225,16 @@ bool NextcloudClient::busy() const
 bool NextcloudClient::authenticated() const
 {
     return m_authenticated;
+}
+
+bool NextcloudClient::onlineReady() const
+{
+    return m_authenticated && !m_restoreOffline;
+}
+
+QString NextcloudClient::sessionNotice() const
+{
+    return m_sessionNotice;
 }
 
 QString NextcloudClient::errorMessage() const
@@ -389,7 +413,7 @@ void NextcloudClient::setLastActiveDirectory(const QString &path)
 
 void NextcloudClient::requestCoverUpload()
 {
-    if (m_authenticated && !m_fileOperationInProgress)
+    if (m_authenticated && requireOnline() && !m_fileOperationInProgress)
         emit coverUploadRequested();
 }
 
@@ -561,13 +585,31 @@ void NextcloudClient::cancelBrowserLogin()
 
 void NextcloudClient::resumeLogin()
 {
+    if (m_busy || m_syncing)
+        return;
     TokenStore store(tokenDirectory());
     if (!store.exists())
         return;
     QString failure;
     QJsonObject credentials;
+    const QUrl oldDavUrl = m_davUrl;
+    const QUrl oldCollectionUrl = m_collectionUrl;
+    const QString oldUsername = m_pendingUsername;
+    const QByteArray oldAuthorization = m_authorizationHeader;
     if (!store.load(&credentials, &failure) || !loadCredentials(tokenDirectory())) {
-        setErrorMessage(failure.isEmpty() ? tr("The saved sign-in is invalid.") : failure);
+        const QString message = failure.isEmpty() ? tr("The saved sign-in is invalid.") : failure;
+        if (m_authenticated)
+            setSessionNotice(message);
+        else
+            setErrorMessage(message);
+        return;
+    }
+    if (m_authenticated && m_collectionUrl != oldCollectionUrl) {
+        m_davUrl = oldDavUrl;
+        m_collectionUrl = oldCollectionUrl;
+        m_pendingUsername = oldUsername;
+        m_authorizationHeader = oldAuthorization;
+        setSessionNotice(tr("The saved account no longer matches the server. Sign in again."));
         return;
     }
     QString path = m_davUrl.path();
@@ -582,6 +624,12 @@ void NextcloudClient::resumeLogin()
     authenticate(server.toString(), m_pendingUsername,
                  credentials.value(QStringLiteral("password")).toString(),
                  QString(), true, true);
+}
+
+void NextcloudClient::retryConnection()
+{
+    if (m_authenticated && m_restoreOffline && !m_busy)
+        resumeLogin();
 }
 
 void NextcloudClient::login(const QString &serverAddress,
@@ -608,13 +656,21 @@ void NextcloudClient::authenticate(const QString &serverAddress,
     if (m_busy || m_syncing)
         return;
 
+    const bool resumeExisting = resuming && m_authenticated && !m_accountId.isEmpty();
     setErrorMessage(QString());
-    setAuthenticated(false);
-    m_accountId.clear();
-    m_directoryCache.clear();
-    m_cachedDirectories = QJsonObject();
-    m_manifest = QJsonObject();
-    m_openManifest = QJsonObject();
+    if (!resuming)
+        setAuthenticated(false);
+    setRestoreOffline(resuming);
+    m_reconnectTimer.stop();
+    if (!resuming)
+        setSessionNotice(QString());
+    if (!resumeExisting) {
+        m_accountId.clear();
+        m_directoryCache.clear();
+        m_cachedDirectories = QJsonObject();
+        m_manifest = QJsonObject();
+        m_openManifest = QJsonObject();
+    }
     m_activeDownloads.clear();
     m_downloadProgress.clear();
     m_uploadItem.clear();
@@ -696,7 +752,7 @@ void NextcloudClient::authenticate(const QString &serverAddress,
             && m_davUrl == requestedServer
             && m_pendingUsername == requestedUsername
             && m_authorizationHeader == requestedAuthorization
-            && selectAccount();
+            && (resumeExisting || selectAccount());
     } else if (!tokenLogin && m_persistentFeaturesAvailable
         && !m_secureStoreRoot.isEmpty()
         && QFileInfo(credentialsPath()).isFile()
@@ -716,6 +772,12 @@ void NextcloudClient::authenticate(const QString &serverAddress,
 
     setBusy(true);
     ++m_requestId;
+    if (resuming && m_offlineLoginAllowed) {
+        setSessionNotice(tr("Restoring sign-in. Showing saved folders."));
+        setAuthenticated(true);
+        emit filesChanged();
+        emit directoryChanged(QString());
+    }
     sendRequest(m_davUrl, "PROPFIND", kPrincipalBody, "0",
                 [this](QNetworkReply *reply) {
         const int status = reply->attribute(
@@ -726,7 +788,6 @@ void NextcloudClient::authenticate(const QString &serverAddress,
                 m_backgroundTask.stop(RuntimeManager::Task::StopFlag::Disable,
                                       [](const RuntimeManager::Error &) {});
                 m_scheduleRequested = false;
-                setPersistentFeaturesAvailable(false);
             }
             failure = m_resuming
                 ? tr("The saved sign-in was rejected or expired. Sign in again.")
@@ -734,6 +795,11 @@ void NextcloudClient::authenticate(const QString &serverAddress,
         } else if (status >= 300 && status < 400) {
             failure = tr("Nextcloud redirected the request. Use its HTTPS address directly.");
         } else if (reply->error() != QNetworkReply::NoError) {
+            if (m_resuming && m_offlineLoginAllowed) {
+                finishLogin(false, reply->errorString());
+                m_reconnectTimer.start();
+                return;
+            }
             if (m_offlineLoginAllowed) {
                 finishOfflineLogin();
                 return;
@@ -751,9 +817,15 @@ void NextcloudClient::authenticate(const QString &serverAddress,
                 if (!collectionPath.endsWith(QLatin1Char('/')))
                     collectionPath += QLatin1Char('/');
                 collectionPath += QStringLiteral("files/") + userId + QLatin1Char('/');
-                m_collectionUrl = m_davUrl;
-                m_collectionUrl.setPath(collectionPath);
-                if (!selectAccount()) {
+                QUrl resolvedCollection = m_davUrl;
+                resolvedCollection.setPath(collectionPath);
+                if (m_resuming && m_offlineLoginAllowed
+                    && resolvedCollection != m_collectionUrl) {
+                    finishLogin(false, tr("The saved account no longer matches the server. Sign in again."));
+                    return;
+                }
+                m_collectionUrl = resolvedCollection;
+                if (!(m_resuming && m_offlineLoginAllowed) && !selectAccount()) {
                     finishLogin(false, tr("Could not open private account storage."));
                     return;
                 }
@@ -778,7 +850,6 @@ void NextcloudClient::loadLoginRoot()
                 m_backgroundTask.stop(RuntimeManager::Task::StopFlag::Disable,
                                       [](const RuntimeManager::Error &) {});
                 m_scheduleRequested = false;
-                setPersistentFeaturesAvailable(false);
             }
             failure = m_resuming
                 ? tr("The saved sign-in was rejected or expired. Sign in again.")
@@ -788,6 +859,11 @@ void NextcloudClient::loadLoginRoot()
         } else if (status >= 300 && status < 400) {
             failure = tr("Nextcloud redirected the request. Use its HTTPS address directly.");
         } else if (reply->error() != QNetworkReply::NoError) {
+            if (m_resuming && m_offlineLoginAllowed) {
+                finishLogin(false, reply->errorString());
+                m_reconnectTimer.start();
+                return;
+            }
             if (m_offlineLoginAllowed) {
                 finishOfflineLogin();
                 return;
@@ -819,6 +895,13 @@ void NextcloudClient::finishLogin(bool success, const QString &failure)
 
     if (!success) {
         m_pendingPassword.clear();
+        if (m_resuming && m_offlineLoginAllowed && m_authenticated) {
+            setRestoreOffline(true);
+            setServerConnected(false);
+            setSessionNotice(tr("Could not restore sign-in: %1. Showing saved folders and offline files.")
+                             .arg(failure));
+            return;
+        }
         m_authorizationHeader.clear();
         setAuthenticated(false);
         setErrorMessage(failure);
@@ -834,12 +917,16 @@ void NextcloudClient::finishLogin(bool success, const QString &failure)
     }
 
     m_pendingPassword.clear();
+    setRestoreOffline(false);
+    setSessionNotice(QString());
     setErrorMessage(QString());
     setAuthenticated(true);
     if (!m_persistentFeaturesAvailable)
         setSyncStatus(tr("Online only; credentials are not saved."));
     emit filesChanged();
     emit directoryChanged(QString());
+    if (m_resuming)
+        emit listingRefreshRequested();
     if (m_persistentFeaturesAvailable) {
         if (!pinMap().isEmpty())
             configureBackgroundTask();
@@ -886,6 +973,7 @@ void NextcloudClient::logout()
         }
     }
     ++m_requestId;
+    m_reconnectTimer.stop();
     m_pinReconcileTimer.stop();
     const QList<QNetworkReply *> replies = m_replies;
     m_replies.clear();
@@ -912,6 +1000,8 @@ void NextcloudClient::logout()
     m_pendingUsername.clear();
     m_tokenLogin = false;
     m_resuming = false;
+    setRestoreOffline(false);
+    setSessionNotice(QString());
     m_accountId.clear();
     m_directoryCache.clear();
     m_cachedDirectories = QJsonObject();
@@ -986,7 +1076,7 @@ void NextcloudClient::revokeToken(const QUrl &url, const QByteArray &authorizati
 
 void NextcloudClient::loadDirectory(const QString &path)
 {
-    if (!m_authenticated)
+    if (!onlineReady())
         return;
 
     const QUrl url = remoteUrl(path, true);
@@ -1033,6 +1123,10 @@ void NextcloudClient::loadDirectory(const QString &path)
 
 void NextcloudClient::togglePin(const QString &path, bool isDirectory)
 {
+    if (!m_authenticated)
+        return;
+    if (!requireOnline())
+        return;
     const QStringList pathParts = path.split(QLatin1Char('/'));
     if (!m_authenticated || !m_persistentFeaturesAvailable
         || pathParts.contains(QStringLiteral(".."))
@@ -1082,6 +1176,8 @@ void NextcloudClient::togglePin(const QString &path, bool isDirectory)
 
 void NextcloudClient::deleteRemoteFile(const QString &path, bool isDirectory)
 {
+    if (!requireOnline())
+        return;
     if (!safeRelativePath(path)) {
         setErrorMessage(tr("The file or folder path is invalid."));
         return;
@@ -1112,6 +1208,8 @@ void NextcloudClient::deleteRemoteFile(const QString &path, bool isDirectory)
 void NextcloudClient::renameRemoteFile(const QString &path, const QString &newName,
                                        bool isDirectory)
 {
+    if (!requireOnline())
+        return;
     if (!safeRelativePath(path) || !safeRemoteName(newName)) {
         setErrorMessage(tr("The file or folder name is invalid."));
         return;
@@ -1439,6 +1537,13 @@ void NextcloudClient::openFile(const QString &path, const QString &name)
         openLocalFile(cachedFilePath(path));
         return;
     }
+    if (!onlineReady() && !isPinned(path)) {
+        if (!openCachedUnpinnedFile(path, name))
+            setErrorMessage(tr("No verified saved copy is available for this file. Connect to open it."));
+        return;
+    }
+    if (!requireOnline())
+        return;
     openRemoteFile(path, name);
 }
 
@@ -1522,6 +1627,8 @@ void NextcloudClient::downloadToDevice(const QString &path)
         saveCopy(cachedFilePath(path));
         return;
     }
+    if (!requireOnline())
+        return;
     if (!QDir().mkpath(m_cacheRoot)) {
         setErrorMessage(tr("Could not create the app's private file cache."));
         return;
@@ -1536,7 +1643,7 @@ void NextcloudClient::downloadToDevice(const QString &path)
     temporary->close();
     downloadFile(path, name, target, QByteArray(),
                  [this, temporary, target, saveCopy](bool success, const QString &failure,
-                                                     bool, const QByteArray &) {
+                                                     bool, const QByteArray &, bool) {
         if (!success) {
             setErrorMessage(failure);
             return;
@@ -1547,6 +1654,8 @@ void NextcloudClient::downloadToDevice(const QString &path)
 
 void NextcloudClient::uploadFile(const QString &directory, const QUrl &fileUrl)
 {
+    if (!requireOnline())
+        return;
     const QString localPath = fileUrl.toLocalFile();
     const QFileInfo info(localPath);
     const QString name = info.fileName();
@@ -1666,8 +1775,7 @@ void NextcloudClient::openRemoteFile(const QString &path, const QString &name)
     if (pinned) {
         target = cachePath(path, name);
     } else {
-        target = QDir(m_cacheRoot).filePath(QStringLiteral("opened/")
-                 + QFileInfo(cachePath(path, name)).fileName());
+        target = openedCachePath(path, name);
     }
 
     const QJsonObject cached = m_openManifest.value(path).toObject();
@@ -1679,9 +1787,15 @@ void NextcloudClient::openRemoteFile(const QString &path, const QString &name)
         ifNoneMatch.clear();
     downloadFile(path, name, target, ifNoneMatch,
                  [this, path, name, pinned, target, cached, cacheLock](bool success,
-                     const QString &failure, bool notModified, const QByteArray &etag) {
+                     const QString &failure, bool notModified, const QByteArray &etag,
+                     bool connectionFailure) {
         if (!success) {
-            setErrorMessage(failure);
+            if (connectionFailure && !isPinned(path)) {
+                if (!openCachedUnpinnedFile(path, name))
+                    setErrorMessage(tr("Could not connect. No verified saved copy is available for this file."));
+            } else {
+                setErrorMessage(failure);
+            }
             return;
         }
         if (notModified && fileHash(target) != cached.value(QStringLiteral("sha256")).toString()) {
@@ -1721,16 +1835,20 @@ void NextcloudClient::openRemoteFile(const QString &path, const QString &name)
     });
 }
 
-void NextcloudClient::openLocalFile(const QString &path)
+bool NextcloudClient::openLocalFile(const QString &path)
 {
-    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path)))
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
         setErrorMessage(tr("No installed application could open this file."));
-    else
-        setErrorMessage(QString());
+        return false;
+    }
+    setErrorMessage(QString());
+    return true;
 }
 
 void NextcloudClient::syncNow()
 {
+    if (!requireOnline())
+        return;
     if (m_syncing || m_backgroundSyncing) {
         setSyncStatus(tr("Sync is already running."));
         return;
@@ -1748,7 +1866,7 @@ void NextcloudClient::syncNow()
 
 void NextcloudClient::checkConnection()
 {
-    if (!m_authenticated || m_authorizationHeader.isEmpty()
+    if (!onlineReady() || m_authorizationHeader.isEmpty()
         || m_collectionUrl.isEmpty() || m_connectionProbeInFlight
         || !isTrustedUrl(m_collectionUrl)) {
         return;
@@ -1764,7 +1882,7 @@ void NextcloudClient::checkConnection()
 
 void NextcloudClient::refreshQuota()
 {
-    if (!m_authenticated || m_authorizationHeader.isEmpty())
+    if (!onlineReady() || m_authorizationHeader.isEmpty())
         return;
     if (m_quotaRequestInFlight) {
         m_quotaRefreshPending = true;
@@ -1902,6 +2020,11 @@ void NextcloudClient::sendRequest(
         connect(reply, &QNetworkReply::finished, bodyDevice, &QObject::deleteLater);
     }
     m_replies.append(reply);
+    if (m_resuming && m_restoreOffline && m_busy)
+        QTimer::singleShot(30000, reply, [reply]() {
+            if (reply->isRunning())
+                reply->abort();
+        });
     const quint64 requestId = m_requestId;
     connect(reply, &QNetworkReply::finished, this,
             [this, reply, handler, requestId]() {
@@ -2584,6 +2707,26 @@ QString NextcloudClient::fileHash(const QString &path) const
     return QString::fromLatin1(hash.result().toHex());
 }
 
+QString NextcloudClient::openedCachePath(const QString &remotePath, const QString &name) const
+{
+    return QDir(m_cacheRoot).filePath(QStringLiteral("opened/")
+                                     + QFileInfo(cachePath(remotePath, name)).fileName());
+}
+
+bool NextcloudClient::openCachedUnpinnedFile(const QString &remotePath, const QString &name)
+{
+    if (!safeRelativePath(remotePath))
+        return false;
+    const QString expected = m_openManifest.value(remotePath).toObject()
+        .value(QStringLiteral("sha256")).toString();
+    const QString target = openedCachePath(remotePath, name);
+    if (expected.isEmpty() || fileHash(target) != expected)
+        return false;
+    if (openLocalFile(target))
+        setErrorMessage(tr("Opened a saved copy. It may be older than the server version."));
+    return true;
+}
+
 QString NextcloudClient::cachedFilePath(const QString &remotePath) const
 {
     const QString relative = m_manifest.value(remotePath).toObject()
@@ -2608,27 +2751,27 @@ void NextcloudClient::downloadFile(
     const QString &name,
     const QString &targetPath,
     const QByteArray &ifNoneMatch,
-    const std::function<void(bool, const QString &, bool, const QByteArray &)> &handler)
+    const std::function<void(bool, const QString &, bool, const QByteArray &, bool)> &handler)
 {
     const QUrl url = remoteUrl(remotePath, false);
     if (!isTrustedUrl(url)) {
         handler(false, tr("Refusing to download a file outside the configured HTTPS server."),
-                false, QByteArray());
+                false, QByteArray(), false);
         return;
     }
     if (m_activeDownloads.contains(remotePath)) {
-        handler(false, tr("This file is already being downloaded."), false, QByteArray());
+        handler(false, tr("This file is already being downloaded."), false, QByteArray(), false);
         return;
     }
 
     if (!QDir().mkpath(QFileInfo(targetPath).absolutePath())) {
-        handler(false, tr("Could not create the app's private file cache."), false, QByteArray());
+        handler(false, tr("Could not create the app's private file cache."), false, QByteArray(), false);
         return;
     }
     QSaveFile *output = new QSaveFile(targetPath, this);
     if (!output->open(QIODevice::WriteOnly)) {
         delete output;
-        handler(false, tr("Could not write to the app's private file cache."), false, QByteArray());
+        handler(false, tr("Could not write to the app's private file cache."), false, QByteArray(), false);
         return;
     }
 
@@ -2695,7 +2838,8 @@ void NextcloudClient::downloadFile(
             output->cancelWriting();
         output->deleteLater();
         reply->deleteLater();
-        handler(success, failure, notModified, reply->rawHeader("ETag"));
+        handler(success, failure, notModified, reply->rawHeader("ETag"),
+                status == 0 && isConnectionFailure(reply->error()));
     });
 }
 
@@ -2884,7 +3028,7 @@ void NextcloudClient::reportBackgroundSchedulingError(const RuntimeManager::Erro
 
 void NextcloudClient::startSync()
 {
-    if (!m_persistentFeaturesAvailable)
+    if (!onlineReady() || !m_persistentFeaturesAvailable)
         return;
     if (m_syncing)
         return;
@@ -3083,7 +3227,7 @@ void NextcloudClient::processNextSyncFile()
 
     downloadFile(item.path, item.name, target, QByteArray(),
                  [this, item, target](bool success, const QString &failure,
-                                      bool, const QByteArray &) {
+                                      bool, const QByteArray &, bool) {
         if (!success) {
             finishSync(false, failure);
             return;
@@ -3306,6 +3450,31 @@ void NextcloudClient::setAuthenticated(bool value)
     m_authenticated = value;
     updateBackgroundTaskState(m_backgroundTask.state());
     emit authenticatedChanged();
+    emit onlineReadyChanged();
+}
+
+void NextcloudClient::setRestoreOffline(bool value)
+{
+    if (m_restoreOffline == value)
+        return;
+    m_restoreOffline = value;
+    emit onlineReadyChanged();
+}
+
+void NextcloudClient::setSessionNotice(const QString &value)
+{
+    if (m_sessionNotice == value)
+        return;
+    m_sessionNotice = value;
+    emit sessionNoticeChanged();
+}
+
+bool NextcloudClient::requireOnline()
+{
+    if (onlineReady())
+        return true;
+    setErrorMessage(tr("This action requires a connection. Saved offline files can still be opened."));
+    return false;
 }
 
 void NextcloudClient::setErrorMessage(const QString &value)

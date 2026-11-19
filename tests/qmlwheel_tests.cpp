@@ -22,6 +22,8 @@ class ProgressClient : public QObject
     Q_PROPERTY(bool syncing READ syncing NOTIFY changed)
     Q_PROPERTY(bool backgroundSyncing READ backgroundSyncing NOTIFY changed)
     Q_PROPERTY(bool authenticated READ authenticated CONSTANT)
+    Q_PROPERTY(bool onlineReady READ onlineReady NOTIFY changed)
+    Q_PROPERTY(QString sessionNotice READ sessionNotice NOTIFY changed)
     Q_PROPERTY(bool persistentFeaturesAvailable READ authenticated CONSTANT)
     Q_PROPERTY(bool hasOfflinePins READ authenticated CONSTANT)
     Q_PROPERTY(bool busy READ busy CONSTANT)
@@ -51,6 +53,8 @@ public:
     bool synced = true;
     bool failed = false;
     bool fileOperation = false;
+    bool online = true;
+    QString notice;
     bool uploading = false;
     int syncRequests = 0;
     QVariantList recent;
@@ -69,6 +73,8 @@ public:
     bool syncing() const { return active; }
     bool backgroundSyncing() const { return backgroundActive; }
     bool authenticated() const { return true; }
+    bool onlineReady() const { return online; }
+    QString sessionNotice() const { return notice; }
     bool serverConnected() const { return connected; }
     bool offlineListSynced() const { return synced; }
     bool offlineSyncFailed() const { return failed; }
@@ -84,6 +90,7 @@ public:
     { renamedPath = path; renamedName = name; }
     Q_INVOKABLE void deleteRemoteFile(const QString &path, bool) { deletedPath = path; }
     Q_INVOKABLE void checkConnection() {}
+    Q_INVOKABLE void retryConnection() {}
     Q_INVOKABLE void refreshQuota() { ++quotaRequests; }
     Q_INVOKABLE void setLastActiveDirectory(const QString &path) { lastDirectory = path; }
     Q_INVOKABLE void requestCoverUpload() { ++coverRequests; emit coverUploadRequested(); }
@@ -156,6 +163,14 @@ private slots:
                  QString::fromUtf8("Удалено"));
         QCOMPARE(translator.translate("LoginPage", "AuroOo"),
                  QString::fromUtf8("АвроОо"));
+        QCOMPARE(translator.translate("FileBrowserPanel", "Retry connection"),
+                 QString::fromUtf8("Повторить подключение"));
+        QVERIFY(translator.translate("NextcloudClient",
+                   "Could not restore sign-in: %1. Showing saved folders and offline files.")
+                .contains(QStringLiteral("%1")));
+        QCOMPARE(translator.translate("NextcloudClient",
+                     "Opened a saved copy. It may be older than the server version."),
+                 QString::fromUtf8("Открыта сохранённая копия. Она может быть старее версии на сервере."));
     }
 
     void loadApplicationComponents()
@@ -379,6 +394,80 @@ private slots:
         emit client.changed();
     }
 
+    void fileIconsFitNarrowAndWidePanels()
+    {
+        ProgressClient client;
+        client.customFiles = {
+            QVariantMap{{"path", "folder"}, {"name", "a long folder name"},
+                        {"isDirectory", true}, {"isPinned", false}},
+            QVariantMap{{"path", "document.pdf"}, {"name", "a long document name.pdf"},
+                        {"isDirectory", false}, {"isPinned", false}, {"size", 10},
+                        {"contentType", "application/pdf"}},
+            QVariantMap{{"path", "image.png"}, {"name", "image.png"},
+                        {"isDirectory", false}, {"isPinned", false}, {"size", 10},
+                        {"contentType", "image/png"}}
+        };
+        QQuickView panel;
+        panel.rootContext()->setContextProperty(QStringLiteral("nextcloudClient"), &client);
+        panel.setResizeMode(QQuickView::SizeRootObjectToView);
+        panel.resize(320, 1000);
+        const QDir source = QFileInfo(QStringLiteral(WHEEL_FIXTURE_PATH)).dir();
+        panel.setSource(QUrl::fromLocalFile(source.absoluteFilePath(
+            QStringLiteral("../../qml/pages/FileBrowserPanel.qml"))));
+        QVERIFY2(panel.status() == QQuickView::Ready, qPrintable(panel.errors().isEmpty()
+                 ? QString() : panel.errors().first().toString()));
+        QQuickItem *root = panel.rootObject();
+        QVERIFY(root);
+        QQmlExpression medium(QQmlEngine::contextForObject(root), root,
+                              QStringLiteral("Theme.iconSizeMedium"));
+        QQmlExpression small(QQmlEngine::contextForObject(root), root,
+                             QStringLiteral("Theme.iconSizeSmall"));
+        const qreal mediumSize = medium.evaluate().toReal();
+        QVERIFY(mediumSize > small.evaluate().toReal());
+        root->setProperty("openChildPath", QStringLiteral("folder"));
+        const QVariantList entries = client.customFiles;
+        const QStringList icons = {QStringLiteral("icon-m-file-folder"),
+                                   QStringLiteral("icon-m-file-pdf"),
+                                   QStringLiteral("icon-m-file-image")};
+        for (int i = 0; i < entries.size(); ++i) {
+            client.customFiles = {entries.at(i)};
+            emit client.filesChanged();
+            const QString path = entries.at(i).toMap().value(QStringLiteral("path")).toString();
+            for (int panelWidth : {320, 600}) {
+                panel.resize(panelWidth, 1000);
+                QQuickItem *row = nullptr;
+                QTRY_VERIFY((row = findVisualItem(root, QStringLiteral("fileItem:") + path)));
+                QQuickItem *icon = findVisualItem(row, QStringLiteral("fileTypeIcon:") + path);
+                QQuickItem *background = findVisualItem(row, QStringLiteral("fileIconBackground:") + path);
+                QQuickItem *label = findVisualItem(row, QStringLiteral("filenameLabel:") + path);
+                QVERIFY(icon);
+                QVERIFY(background);
+                QVERIFY(label);
+                QCOMPARE(icon->width(), mediumSize);
+                QCOMPARE(icon->height(), mediumSize);
+                QVERIFY(icon->property("source").toUrl().toString().endsWith(icons.at(i)));
+                QVERIFY(background->mapToItem(row, QPointF(background->width(), 0)).x()
+                        < label->mapToItem(row, QPointF(0, 0)).x());
+                QVERIFY(label->width() > mediumSize);
+                QVERIFY(label->mapToItem(row, QPointF(label->width(), 0)).x() <= row->width());
+                QVERIFY(row->property("contentHeight").toReal() >= background->height());
+                if (path == QStringLiteral("folder"))
+                    QVERIFY(icon->property("highlighted").toBool());
+                if (path == QStringLiteral("document.pdf") && panelWidth == 320) {
+                    QVERIFY(QMetaObject::invokeMethod(row, "beginRename"));
+                    QQuickItem *field = findVisualItem(row, QStringLiteral("inlineRename:") + path);
+                    QQuickItem *button = findVisualItem(row, QStringLiteral("applyRename:") + path);
+                    QVERIFY(field);
+                    QVERIFY(button);
+                    QVERIFY(field->width() > 0);
+                    QVERIFY(field->mapToItem(row, QPointF(field->width(), 0)).x()
+                            <= button->mapToItem(row, QPointF(0, 0)).x());
+                    row->setProperty("editingName", false);
+                }
+            }
+        }
+    }
+
     void offlineActionRemainsAvailableDuringSync()
     {
         ProgressClient client;
@@ -480,6 +569,8 @@ private slots:
     void fileBrowserPageShowsItsInitialList()
     {
         ProgressClient client;
+        client.online = false;
+        client.notice = QStringLiteral("Saved folders are available offline");
         QQmlEngine engine;
         engine.rootContext()->setContextProperty(QStringLiteral("nextcloudClient"), &client);
         const QDir source = QFileInfo(QStringLiteral(WHEEL_FIXTURE_PATH)).dir();
@@ -490,12 +581,17 @@ private slots:
         QVERIFY2(page, qPrintable(component.errorString()));
         QQuickItem *root = qobject_cast<QQuickItem *>(page.data());
         QVERIFY(root);
+        root->setVisible(true);
         root->setWidth(800);
         root->setHeight(1000);
 
         QQuickItem *splitView = nullptr;
         QTRY_VERIFY((splitView = findVisualItem(root,
             QStringLiteral("fileBrowserSplitView"))));
+        QQuickItem *banner = findVisualItem(root, QStringLiteral("sessionNoticeBanner"));
+        QVERIFY(banner);
+        QVERIFY(banner->isVisible());
+        QVERIFY(banner->height() > 0);
         QCOMPARE(splitView->parentItem(), root);
         QTRY_VERIFY(splitView->height() > 0);
         QCOMPARE(splitView->property("count").toInt(), 1);
@@ -516,6 +612,15 @@ private slots:
         QVERIFY(loader);
         QVERIFY(loader->property("active").toBool());
         QVERIFY(loader->property("item").value<QObject *>());
+        QObject *reconnect = loader->property("item").value<QObject *>()->findChild<QObject *>(
+            QStringLiteral("reconnectAction"));
+        QVERIFY(reconnect);
+        QVERIFY(reconnect->property("enabled").toBool());
+        QCOMPARE(reconnect->property("text").toString(), QStringLiteral("Retry connection"));
+        client.online = true;
+        client.notice.clear();
+        emit client.changed();
+        QVERIFY(!banner->isVisible());
         QCOMPARE(fileList->property("pullDownMenu").value<QObject *>(),
                  loader->property("item").value<QObject *>());
         QVERIFY(QMetaObject::invokeMethod(panel, "folderActivated",
@@ -629,6 +734,27 @@ private slots:
         QTest::mouseClick(&view, Qt::BackButton, Qt::NoModifier, QPoint(100, 400));
         QTRY_COMPARE(page->property("activePath").toString(), QStringLiteral("folder/other"));
         QTest::qWait(400);
+    }
+
+    void restoredSessionStartsOnFileBrowser()
+    {
+        ProgressClient client;
+        client.online = false;
+        client.notice = QStringLiteral("Restoring sign-in");
+        QQuickView view;
+        view.rootContext()->setContextProperty(QStringLiteral("nextcloudClient"), &client);
+        view.setResizeMode(QQuickView::SizeRootObjectToView);
+        view.resize(600, 800);
+        const QDir source = QFileInfo(QStringLiteral(WHEEL_FIXTURE_PATH)).dir();
+        view.setSource(QUrl::fromLocalFile(source.absoluteFilePath(
+            QStringLiteral("../../qml/NextcloudFiles.qml"))));
+        QVERIFY2(view.status() == QQuickView::Ready, qPrintable(view.errors().isEmpty()
+                 ? QString() : view.errors().first().toString()));
+        QQuickItem *split = nullptr;
+        QTRY_VERIFY((split = findVisualItem(view.rootObject(),
+                                            QStringLiteral("fileBrowserSplitView"))));
+        QCOMPARE(split->property("count").toInt(), 1);
+        QVERIFY(findVisualItem(view.rootObject(), QStringLiteral("sessionNoticeBanner")));
     }
 
 #endif

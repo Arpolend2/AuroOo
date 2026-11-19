@@ -4,7 +4,8 @@ import Sailfish.Silica 1.0
 ApplicationWindow {
     id: appWindow
     objectName: "nextcloudFilesWindow"
-    initialPage: Qt.resolvedUrl("pages/LoginPage.qml")
+    initialPage: Qt.resolvedUrl(nextcloudClient.authenticated
+                                ? "pages/FilesPage.qml" : "pages/LoginPage.qml")
     cover: Qt.resolvedUrl("covers/CoverPage.qml")
     allowedOrientations: Orientation.All
 

@@ -30,6 +30,8 @@ class NextcloudClient : public QObject
     Q_OBJECT
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(bool authenticated READ authenticated NOTIFY authenticatedChanged)
+    Q_PROPERTY(bool onlineReady READ onlineReady NOTIFY onlineReadyChanged)
+    Q_PROPERTY(QString sessionNotice READ sessionNotice NOTIFY sessionNoticeChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(QVariantList files READ files NOTIFY filesChanged)
     Q_PROPERTY(bool syncing READ syncing NOTIFY syncingChanged)
@@ -67,6 +69,8 @@ public:
 
     bool busy() const;
     bool authenticated() const;
+    bool onlineReady() const;
+    QString sessionNotice() const;
     QString errorMessage() const;
     QVariantList files() const;
     bool syncing() const;
@@ -98,6 +102,7 @@ public:
     Q_INVOKABLE void browserLogin(const QString &serverAddress);
     Q_INVOKABLE void cancelBrowserLogin();
     void resumeLogin();
+    Q_INVOKABLE void retryConnection();
     Q_INVOKABLE void logout();
     Q_INVOKABLE void loadDirectory(const QString &path);
     Q_INVOKABLE void togglePin(const QString &path, bool isDirectory);
@@ -118,6 +123,8 @@ public:
 signals:
     void busyChanged();
     void authenticatedChanged();
+    void onlineReadyChanged();
+    void sessionNoticeChanged();
     void errorMessageChanged();
     void filesChanged();
     void directoryChanged(const QString &path);
@@ -153,6 +160,9 @@ private:
 
     void setBusy(bool value);
     void setAuthenticated(bool value);
+    void setRestoreOffline(bool value);
+    void setSessionNotice(const QString &value);
+    bool requireOnline();
     void setErrorMessage(const QString &value);
     void setSyncing(bool value);
     void setSyncStatus(const QString &value);
@@ -209,6 +219,8 @@ private:
     QUrl remoteUrl(const QString &path, bool isDirectory) const;
     bool isTrustedUrl(const QUrl &url) const;
     QString cachePath(const QString &remotePath, const QString &name) const;
+    QString openedCachePath(const QString &remotePath, const QString &name) const;
+    bool openCachedUnpinnedFile(const QString &remotePath, const QString &name);
     QString fileHash(const QString &path) const;
     QString cachedFilePath(const QString &remotePath) const;
     bool cachedFileIsCurrent(const QString &remotePath) const;
@@ -217,13 +229,13 @@ private:
                       const QString &targetPath,
                       const QByteArray &ifNoneMatch,
                       const std::function<void(bool, const QString &, bool,
-                                               const QByteArray &)> &handler);
+                                               const QByteArray &, bool)> &handler);
     void setDownloadProgress(const QString &path, qint64 received, qint64 total);
     void updateBackgroundTaskState(RuntimeManager::Task::State state);
     void readBackgroundProgress();
     void refreshBackgroundActivity();
     void publishBackgroundProgress(bool force);
-    void openLocalFile(const QString &path);
+    bool openLocalFile(const QString &path);
     QVariantMap pinMap() const;
     bool pathIsWithin(const QString &path, const QString &parent) const;
     bool pathIsInSyncScope(const QString &path) const;
@@ -248,6 +260,7 @@ private:
     QTimer m_backgroundSyncDeadline;
     QTimer m_backgroundProgressTimer;
     QTimer m_pinReconcileTimer;
+    QTimer m_reconnectTimer;
     QScopedPointer<QLockFile> m_syncLock;
     QScopedPointer<QLockFile> m_mutationLock;
     QElapsedTimer m_backgroundProgressThrottle;
@@ -278,6 +291,7 @@ private:
     QString m_pendingUsername;
     QString m_pendingPassword;
     QString m_errorMessage;
+    QString m_sessionNotice;
     QString m_syncStatus;
     QString m_lastSync;
     QDateTime m_lastConnection;
@@ -287,6 +301,7 @@ private:
     quint64 m_syncPinRevision;
     bool m_busy;
     bool m_authenticated;
+    bool m_restoreOffline;
     bool m_syncing;
     bool m_offlineLoginAllowed;
     bool m_secureStoreAlreadyOpened;

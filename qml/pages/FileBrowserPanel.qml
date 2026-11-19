@@ -71,15 +71,22 @@ Item {
                                   : qsTr("Not synced yet")
                         }
                         MenuItem {
+                            objectName: "reconnectAction"
+                            text: nextcloudClient.busy ? qsTr("Connecting…") : qsTr("Retry connection")
+                            visible: !nextcloudClient.onlineReady
+                            enabled: !nextcloudClient.busy
+                            onClicked: nextcloudClient.retryConnection()
+                        }
+                        MenuItem {
                             objectName: "uploadAction"
                             text: qsTr("Upload")
-                            enabled: !nextcloudClient.fileOperationInProgress
+                            enabled: nextcloudClient.onlineReady && !nextcloudClient.fileOperationInProgress
                             onClicked: panel.uploadRequested()
                         }
                         MenuItem {
                             objectName: "syncNowAction"
                             text: qsTr("Sync now")
-                            enabled: nextcloudClient.persistentFeaturesAvailable
+                            enabled: nextcloudClient.onlineReady && nextcloudClient.persistentFeaturesAvailable
                                      && !nextcloudClient.syncing
                                      && !nextcloudClient.backgroundSyncing
                                      && !nextcloudClient.fileOperationInProgress
@@ -104,6 +111,7 @@ Item {
                 objectName: "fileItem:" + modelData.path
                 width: fileList.width
                 contentHeight: Math.max(Theme.itemSizeMedium,
+                                        iconBackground.height + 2 * Theme.paddingSmall,
                                         fileDetails.height + 2 * Theme.paddingSmall)
                 menu: modelData.isUploading ? null : fileMenu
                 property var progress: modelData.isUploading
@@ -180,11 +188,34 @@ Item {
                     opacity: Theme.highlightBackgroundOpacity
                 }
 
+                Rectangle {
+                    id: iconBackground
+                    objectName: "fileIconBackground:" + modelData.path
+                    width: Theme.iconSizeMedium + 2 * Theme.paddingSmall
+                    height: width
+                    anchors.left: parent.left
+                    anchors.leftMargin: Theme.horizontalPageMargin
+                    y: (fileItem.contentHeight - height) / 2
+                    color: Theme.highlightBackgroundColor
+                    opacity: Theme.highlightBackgroundOpacity
+                }
+
+                HighlightImage {
+                    id: fileTypeIcon
+                    objectName: "fileTypeIcon:" + modelData.path
+                    width: Theme.iconSizeMedium
+                    height: width
+                    anchors.centerIn: iconBackground
+                    fillMode: Image.PreserveAspectFit
+                    highlighted: fileItem.highlighted || fileItem.openInNextPanel
+                    source: fileIcon(modelData)
+                }
+
                 Column {
                     id: fileDetails
-                    anchors.left: parent.left
+                    anchors.left: iconBackground.right
                     anchors.right: parent.right
-                    anchors.leftMargin: Theme.horizontalPageMargin
+                    anchors.leftMargin: Theme.paddingMedium
                     anchors.rightMargin: Theme.horizontalPageMargin
                     y: (fileItem.contentHeight - height) / 2
                     spacing: Theme.paddingSmall
@@ -192,24 +223,13 @@ Item {
                     Item {
                         id: filenameRow
                         width: parent.width
-                        height: Math.max(fileTypeIcon.height,
-                                         fileItem.editingName ? Math.max(renameField.height, applyRename.height)
-                                                              : filenameLabel.height)
-
-                        Image {
-                            id: fileTypeIcon
-                            objectName: "fileTypeIcon:" + modelData.path
-                            width: Theme.iconSizeSmall
-                            height: width
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            source: fileIcon(modelData)
-                        }
+                        height: fileItem.editingName ? Math.max(renameField.height, applyRename.height)
+                                                     : filenameLabel.height
 
                         Label {
                             id: filenameLabel
-                            anchors.left: fileTypeIcon.right
-                            anchors.leftMargin: Theme.paddingSmall
+                            objectName: "filenameLabel:" + modelData.path
+                            anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             visible: !fileItem.editingName
@@ -220,8 +240,7 @@ Item {
                         TextField {
                             id: renameField
                             objectName: "inlineRename:" + modelData.path
-                            anchors.left: fileTypeIcon.right
-                            anchors.leftMargin: Theme.paddingSmall
+                            anchors.left: parent.left
                             anchors.right: applyRename.left
                             anchors.rightMargin: Theme.paddingSmall
                             anchors.verticalCenter: parent.verticalCenter
@@ -255,10 +274,12 @@ Item {
 
                     Label {
                         objectName: "shareIndicator:" + modelData.path
+                        width: parent.width
                         visible: modelData.shareDirection === "shared-with-me"
                                  || modelData.shareDirection === "shared-by-me"
                         font.pixelSize: Theme.fontSizeExtraSmall
                         color: Theme.highlightColor
+                        truncationMode: TruncationMode.Fade
                         text: modelData.shareDirection === "shared-with-me"
                               ? qsTr("↓ Shared with me")
                               : qsTr("↑ Shared by me")
@@ -318,7 +339,7 @@ Item {
                                       : modelData.isExplicitlyPinned
                                         ? qsTr("Stop syncing to device")
                                         : qsTr("Keep synced on device")
-                            enabled: nextcloudClient.persistentFeaturesAvailable
+                            enabled: nextcloudClient.onlineReady && nextcloudClient.persistentFeaturesAvailable
                                      && (!modelData.isPinned
                                          || modelData.isExplicitlyPinned)
                             onClicked: nextcloudClient.togglePin(modelData.path,
@@ -328,7 +349,7 @@ Item {
                         MenuItem {
                             objectName: "renameAction"
                             text: qsTr("Rename")
-                            enabled: !nextcloudClient.fileOperationInProgress
+                            enabled: nextcloudClient.onlineReady && !nextcloudClient.fileOperationInProgress
                                      && !nextcloudClient.syncing
                                      && !nextcloudClient.backgroundSyncing
                             onClicked: fileItem.beginRename()
@@ -337,7 +358,7 @@ Item {
                         MenuItem {
                             objectName: "deleteAction"
                             text: qsTr("Delete")
-                            enabled: !nextcloudClient.fileOperationInProgress
+                            enabled: nextcloudClient.onlineReady && !nextcloudClient.fileOperationInProgress
                                      && !nextcloudClient.syncing
                                      && !nextcloudClient.backgroundSyncing
                             onClicked: fileItem.beginDelete()

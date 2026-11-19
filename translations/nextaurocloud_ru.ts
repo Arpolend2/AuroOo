@@ -11,6 +11,14 @@
 <context>
     <name>FileBrowserPanel</name>
     <message>
+        <source>Connecting…</source>
+        <translation>Подключение…</translation>
+    </message>
+    <message>
+        <source>Retry connection</source>
+        <translation>Повторить подключение</translation>
+    </message>
+    <message>
         <source>↓ Shared with me</source>
         <translation>↓ Предоставлено мне</translation>
     </message>
@@ -140,6 +148,34 @@
 </context>
 <context>
     <name>NextcloudClient</name>
+    <message>
+        <source>No verified saved copy is available for this file. Connect to open it.</source>
+        <translation>Проверенная сохранённая копия файла недоступна. Подключитесь, чтобы открыть его.</translation>
+    </message>
+    <message>
+        <source>Could not connect. No verified saved copy is available for this file.</source>
+        <translation>Не удалось подключиться. Проверенная сохранённая копия файла недоступна.</translation>
+    </message>
+    <message>
+        <source>Opened a saved copy. It may be older than the server version.</source>
+        <translation>Открыта сохранённая копия. Она может быть старее версии на сервере.</translation>
+    </message>
+    <message>
+        <source>Restoring sign-in. Showing saved folders.</source>
+        <translation>Восстановление входа. Показаны сохранённые папки.</translation>
+    </message>
+    <message>
+        <source>The saved account no longer matches the server. Sign in again.</source>
+        <translation>Сохранённая учётная запись больше не совпадает с данными сервера. Войдите снова.</translation>
+    </message>
+    <message>
+        <source>Could not restore sign-in: %1. Showing saved folders and offline files.</source>
+        <translation>Не удалось восстановить вход: %1. Показаны сохранённые папки и файлы.</translation>
+    </message>
+    <message>
+        <source>This action requires a connection. Saved offline files can still be opened.</source>
+        <translation>Для этого действия нужно подключение. Сохранённые файлы по-прежнему можно открыть.</translation>
+    </message>
     <message>
         <source>Enter a valid HTTPS Nextcloud address.</source>
         <translation>Введите корректный HTTPS-адрес Nextcloud.</translation>

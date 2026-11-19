@@ -90,6 +90,7 @@ public:
     int quotaStatus = 200;
     QByteArray quotaBody;
     bool foreignPoll = false;
+    QString principalUserId = QStringLiteral("alice");
     QList<QUrl> urls;
     QList<QByteArray> authorizations;
     QList<Operation> operations;
@@ -145,7 +146,9 @@ protected:
             body = R"(<ocs><meta><status>ok</status><statuscode>200</statuscode></meta><data/></ocs>)";
         } else if (status == 200 && path.endsWith(QStringLiteral("/remote.php/dav/"))) {
             response = 207;
-            body = R"(<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:current-user-principal><d:href>/nextcloud/remote.php/dav/principals/users/alice/</d:href></d:current-user-principal></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>)";
+            body = QByteArray(R"(<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:current-user-principal><d:href>/nextcloud/remote.php/dav/principals/users/)")
+                + principalUserId.toUtf8()
+                + R"(/</d:href></d:current-user-principal></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>)";
         } else if (status == 200 && operation == GetOperation && downloads.contains(path)) {
             if (!etags.value(path).isEmpty()
                 && request.rawHeader("If-None-Match") == etags.value(path)) {
@@ -270,7 +273,7 @@ private slots:
         QDesktopServices::unsetUrlHandler(QStringLiteral("https"));
     }
 
-    void expiredTokenDoesNotLogInOffline()
+    void expiredTokenKeepsCachedBrowsingAvailable()
     {
         MockNetwork network;
         {
@@ -280,14 +283,33 @@ private slots:
             client.m_pendingUsername = QStringLiteral("alice");
             client.m_pendingPassword = QStringLiteral("dedicated-token");
             client.m_tokenLogin = true;
+            QVERIFY(client.selectAccount());
             QVERIFY(client.saveCredentials());
+            QSettings().setValue(client.accountSetting("offline/pins"),
+                                 QVariantMap{{QStringLiteral("kept.txt"), false}});
+            QVERIFY(client.saveDirectoryListing(QString(), {
+                QVariantMap{{"path", "kept.txt"}, {"name", "kept.txt"},
+                            {"isDirectory", false}, {"size", 4}}
+            }));
+            saveCachedFile(client, QStringLiteral("kept.txt"), "kept");
         }
         network.status = 401;
         NextcloudClient client(nullptr, &network);
+        QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "open");
         client.resumeLogin();
         QTRY_VERIFY(!client.busy());
-        QVERIFY(!client.authenticated());
-        QVERIFY(client.errorMessage().contains(QStringLiteral("expired")));
+        QVERIFY(client.authenticated());
+        QVERIFY(!client.onlineReady());
+        QVERIFY(client.sessionNotice().contains(QStringLiteral("expired")));
+        QCOMPARE(client.filesForPath(QString()).first().toMap().value("name").toString(),
+                 QStringLiteral("kept.txt"));
+        client.openFile(QStringLiteral("kept.txt"), QStringLiteral("kept.txt"));
+        QCOMPARE(opened.size(), 1);
+        const int requestCount = network.urls.size();
+        client.deleteRemoteFile(QStringLiteral("kept.txt"), false);
+        QCOMPARE(network.urls.size(), requestCount);
+        QVERIFY(!client.errorMessage().isEmpty());
+        QDesktopServices::unsetUrlHandler(QStringLiteral("file"));
     }
 
     void rejectsForeignPollEndpoint()
@@ -318,9 +340,130 @@ private slots:
         network.status = 0;
         NextcloudClient client(nullptr, &network);
         client.resumeLogin();
-        QTRY_VERIFY(client.authenticated());
-        QVERIFY(client.syncStatus().contains(QStringLiteral("Offline")));
+        QTRY_VERIFY(!client.busy());
+        QVERIFY(client.authenticated());
+        QVERIFY(!client.onlineReady());
+        QVERIFY(client.sessionNotice().contains(QStringLiteral("Showing saved folders")));
         QVERIFY(client.persistentFeaturesAvailable());
+    }
+
+    void cachedTreeOpensBeforeLoginAndRefreshesAfterRetry()
+    {
+        MockNetwork network;
+        const QString principal = QStringLiteral("/nextcloud/remote.php/dav/");
+        {
+            NextcloudClient client(nullptr, &network);
+            client.m_davUrl = QUrl("https://cloud.example.test/nextcloud/remote.php/dav/");
+            client.m_collectionUrl = QUrl("https://cloud.example.test/nextcloud/remote.php/dav/files/alice/");
+            client.m_pendingUsername = QStringLiteral("alice");
+            client.m_pendingPassword = QStringLiteral("dedicated-token");
+            client.m_tokenLogin = true;
+            QVERIFY(client.selectAccount());
+            QVERIFY(client.saveCredentials());
+            QSettings().setValue(client.accountSetting("offline/pins"),
+                                 QVariantMap{{QStringLiteral("folder"), true}});
+            QVERIFY(client.saveDirectoryListing(QString(), {
+                QVariantMap{{"path", "folder"}, {"name", "folder"}, {"isDirectory", true}}
+            }));
+            QVERIFY(client.saveDirectoryListing(QStringLiteral("folder"), {
+                QVariantMap{{"path", "folder/offline.txt"}, {"name", "offline.txt"},
+                            {"isDirectory", false}, {"size", 7}}
+            }));
+            saveCachedFile(client, QStringLiteral("folder/offline.txt"), "offline");
+        }
+        network.heldPaths.insert(principal);
+        NextcloudClient client(nullptr, &network);
+        QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "open");
+        client.resumeLogin();
+        QVERIFY(client.busy());
+        QVERIFY(client.authenticated());
+        QVERIFY(!client.onlineReady());
+        QCOMPARE(client.filesForPath(QString()).first().toMap().value("name").toString(),
+                 QStringLiteral("folder"));
+        QCOMPARE(client.filesForPath(QStringLiteral("folder")).first().toMap().value("name").toString(),
+                 QStringLiteral("offline.txt"));
+        const int requestCount = network.urls.size();
+        client.loadDirectory(QStringLiteral("folder"));
+        client.openFile(QStringLiteral("folder/offline.txt"), QStringLiteral("offline.txt"));
+        QCOMPARE(opened.size(), 1);
+        client.openFile(QStringLiteral("missing.txt"), QStringLiteral("missing.txt"));
+        QVERIFY(!client.errorMessage().isEmpty());
+        QCOMPARE(network.urls.size(), requestCount);
+        QVERIFY(network.heldReplies.contains(principal));
+        network.status = 0;
+        network.heldReplies.value(principal)->abort();
+        QTRY_VERIFY(!client.busy());
+        QVERIFY(client.authenticated());
+        QVERIFY(!client.sessionNotice().isEmpty());
+        QVERIFY(!client.onlineReady());
+        QCOMPARE(client.filesForPath(QStringLiteral("folder")).size(), 1);
+        network.heldPaths.clear();
+        network.status = 200;
+        network.listingBody = R"(<d:multistatus xmlns:d="DAV:"><d:response><d:href>/nextcloud/remote.php/dav/files/alice/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response><d:response><d:href>/nextcloud/remote.php/dav/files/alice/new.txt</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>3</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>)";
+        QSignalSpy refresh(&client, SIGNAL(listingRefreshRequested()));
+        QVERIFY(client.m_reconnectTimer.isActive());
+        QVERIFY(QMetaObject::invokeMethod(&client.m_reconnectTimer, "timeout"));
+        QTRY_VERIFY(!client.busy());
+        QVERIFY(client.onlineReady());
+        QVERIFY(client.sessionNotice().isEmpty());
+        QCOMPARE(client.filesForPath(QString()).first().toMap().value("name").toString(),
+                 QStringLiteral("new.txt"));
+        QCOMPARE(refresh.count(), 1);
+        QDesktopServices::unsetUrlHandler(QStringLiteral("file"));
+    }
+
+    void changedPrincipalDoesNotReplaceCachedAccount()
+    {
+        MockNetwork network;
+        {
+            NextcloudClient client(nullptr, &network);
+            client.m_davUrl = QUrl("https://cloud.example.test/nextcloud/remote.php/dav/");
+            client.m_collectionUrl = QUrl("https://cloud.example.test/nextcloud/remote.php/dav/files/alice/");
+            client.m_pendingUsername = QStringLiteral("alice");
+            client.m_pendingPassword = QStringLiteral("dedicated-token");
+            client.m_tokenLogin = true;
+            QVERIFY(client.selectAccount());
+            QVERIFY(client.saveCredentials());
+            QVERIFY(client.saveDirectoryListing(QString(), {
+                QVariantMap{{"path", "alice-only"}, {"name", "alice-only"}, {"isDirectory", true}}
+            }));
+        }
+        network.principalUserId = QStringLiteral("bob");
+        NextcloudClient client(nullptr, &network);
+        client.resumeLogin();
+        QTRY_VERIFY(!client.busy());
+        QVERIFY(client.authenticated());
+        QVERIFY(!client.onlineReady());
+        QVERIFY(client.sessionNotice().contains(QStringLiteral("no longer matches")));
+        QCOMPARE(client.filesForPath(QString()).first().toMap().value("name").toString(),
+                 QStringLiteral("alice-only"));
+        QCOMPARE(network.urls.size(), 1);
+    }
+
+    void logoutCancelsPendingRestore()
+    {
+        MockNetwork network;
+        {
+            NextcloudClient client(nullptr, &network);
+            client.m_davUrl = QUrl("https://cloud.example.test/nextcloud/remote.php/dav/");
+            client.m_collectionUrl = QUrl("https://cloud.example.test/nextcloud/remote.php/dav/files/alice/");
+            client.m_pendingUsername = QStringLiteral("alice");
+            client.m_pendingPassword = QStringLiteral("dedicated-token");
+            client.m_tokenLogin = true;
+            QVERIFY(client.saveCredentials());
+        }
+        network.heldPaths.insert(QStringLiteral("/nextcloud/remote.php/dav/"));
+        NextcloudClient client(nullptr, &network);
+        client.resumeLogin();
+        QVERIFY(client.authenticated());
+        QVERIFY(client.busy());
+        client.logout();
+        QVERIFY(!client.authenticated());
+        QVERIFY(!client.busy());
+        QVERIFY(client.filesForPath(QString()).isEmpty());
+        QVERIFY(client.sessionNotice().isEmpty());
+        QTRY_VERIFY(client.m_replies.isEmpty());
+        QVERIFY(!client.authenticated());
     }
 
     void backgroundUsesSavedToken()
@@ -1132,10 +1275,72 @@ private slots:
 
             network.status = 0;
             client.openFile(path, QStringLiteral("open.txt"));
-            QTRY_VERIFY(!client.errorMessage().isEmpty());
-            QCOMPARE(opened.size(), 6);
+            QTRY_COMPARE(opened.size(), 7);
+            QCOMPARE(opened.last().toLocalFile(), target);
+            QVERIFY(client.errorMessage().contains(QStringLiteral("older")));
             QVERIFY(client.downloadProgress().isEmpty());
+
+            const int requestCount = network.urls.size();
+            client.setRestoreOffline(true);
+            client.openFile(path, QStringLiteral("open.txt"));
+            QCOMPARE(opened.size(), 8);
+            QCOMPARE(network.urls.size(), requestCount);
+            QVERIFY(client.errorMessage().contains(QStringLiteral("older")));
+            QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            QCOMPARE(file.write("local edit"), qint64(10));
+            file.close();
+            client.openFile(path, QStringLiteral("open.txt"));
+            QCOMPARE(opened.size(), 8);
+            QVERIFY(client.errorMessage().contains(QStringLiteral("No verified saved copy")));
+            QVERIFY(file.remove());
+            client.openFile(path, QStringLiteral("open.txt"));
+            QCOMPARE(opened.size(), 8);
+            QVERIFY(client.errorMessage().contains(QStringLiteral("No verified saved copy")));
         }
+        QDesktopServices::unsetUrlHandler(QStringLiteral("file"));
+    }
+
+    void rejectedOnlineRequestDoesNotOpenCachedCopy()
+    {
+        QTemporaryDir cache;
+        QVERIFY(cache.isValid());
+        MockNetwork network;
+        const QString path = QStringLiteral("open.txt");
+        const QString remote = QStringLiteral("/nextcloud/remote.php/dav/files/alice/open.txt");
+        network.downloads.insert(remote, "saved");
+        QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "open");
+        NextcloudClient client(nullptr, &network);
+        prepareSync(client, cache.path());
+        QSettings().remove(client.accountSetting("offline/pins"));
+        client.openFile(path, path);
+        QTRY_COMPARE(opened.size(), 1);
+        network.status = 401;
+        client.openFile(path, path);
+        QTRY_VERIFY(!client.errorMessage().isEmpty());
+        QCOMPARE(opened.size(), 1);
+        QDesktopServices::unsetUrlHandler(QStringLiteral("file"));
+    }
+
+    void openedFileCacheIsAccountScoped()
+    {
+        QTemporaryDir cache;
+        QVERIFY(cache.isValid());
+        MockNetwork network;
+        const QString path = QStringLiteral("private-isolation-check.txt");
+        network.downloads.insert(
+            QStringLiteral("/nextcloud/remote.php/dav/files/alice/") + path, "alice");
+        QDesktopServices::setUrlHandler(QStringLiteral("file"), this, "open");
+        NextcloudClient client(nullptr, &network);
+        prepareSync(client, cache.path());
+        QSettings().remove(client.accountSetting("offline/pins"));
+        client.openFile(path, path);
+        QTRY_COMPARE(opened.size(), 1);
+        client.m_collectionUrl = QUrl("https://cloud.example.test/nextcloud/remote.php/dav/files/bob/");
+        QVERIFY(client.selectAccount());
+        client.setRestoreOffline(true);
+        client.openFile(path, path);
+        QCOMPARE(opened.size(), 1);
+        QVERIFY(client.errorMessage().contains(QStringLiteral("No verified saved copy")));
         QDesktopServices::unsetUrlHandler(QStringLiteral("file"));
     }
 

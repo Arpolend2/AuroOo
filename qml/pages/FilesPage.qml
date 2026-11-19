@@ -78,6 +78,24 @@ Page {
         width: parent.width
         height: childrenRect.height
 
+        Rectangle {
+            objectName: "sessionNoticeBanner"
+            width: parent.width
+            height: visible ? sessionNoticeLabel.implicitHeight + 2 * Theme.paddingSmall : 0
+            visible: nextcloudClient.sessionNotice.length > 0
+            color: Theme.highlightBackgroundColor
+
+            Label {
+                id: sessionNoticeLabel
+                x: Theme.horizontalPageMargin
+                width: parent.width - 2 * Theme.horizontalPageMargin
+                anchors.verticalCenter: parent.verticalCenter
+                wrapMode: Text.Wrap
+                font.pixelSize: Theme.fontSizeExtraSmall
+                text: nextcloudClient.sessionNotice
+            }
+        }
+
         Label {
             id: syncStatusLabel
             x: Theme.horizontalPageMargin
