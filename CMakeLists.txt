@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(ru.auroraos.NextcloudFiles VERSION 1.3 LANGUAGES CXX)
+project(ru.arpolend.AuroOo VERSION 1.3 LANGUAGES CXX)
 
 find_package(Qt5 COMPONENTS Core Gui Network Qml Quick DBus REQUIRED)
 find_package(Qt5LinguistTools REQUIRED)
@@ -14,7 +14,7 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_executable(ru.auroraos.NextcloudFiles
+add_executable(${PROJECT_NAME}
     CMakeLists.txt
     src/main.cpp
     src/nextcloudclient.cpp
@@ -28,19 +28,19 @@ add_executable(ru.auroraos.NextcloudFiles
     qml/pages/UploadPicker.qml
     qml/icons/cover-upload.svg
     qml/covers/CoverPage.qml
-    ru.auroraos.NextcloudFiles.desktop
-    rpm/ru.auroraos.NextcloudFiles.spec
+    ${PROJECT_NAME}.desktop
+    rpm/${PROJECT_NAME}.spec
 )
 
-target_compile_definitions(ru.auroraos.NextcloudFiles PRIVATE
+target_compile_definitions(${PROJECT_NAME} PRIVATE
     APP_VERSION="${PROJECT_VERSION}"
 )
 
-target_include_directories(ru.auroraos.NextcloudFiles PRIVATE
+target_include_directories(${PROJECT_NAME} PRIVATE
     ${AURORA_INCLUDE_DIRS}
 )
 
-target_link_libraries(ru.auroraos.NextcloudFiles
+target_link_libraries(${PROJECT_NAME}
     Qt5::Core
     Qt5::Gui
     Qt5::Network
@@ -51,19 +51,19 @@ target_link_libraries(ru.auroraos.NextcloudFiles
     runtime-manager-qt5
 )
 
-install(TARGETS ru.auroraos.NextcloudFiles
+install(TARGETS ${PROJECT_NAME}
     RUNTIME DESTINATION bin
 )
 install(DIRECTORY qml
-    DESTINATION share/ru.auroraos.NextcloudFiles
+    DESTINATION share/${PROJECT_NAME}
 )
 install(FILES ${TRANSLATION_FILES}
-    DESTINATION share/ru.auroraos.NextcloudFiles/translations
+    DESTINATION share/${PROJECT_NAME}/translations
 )
 install(FILES LICENSES/UIComponentGallery-BSD-3-Clause.txt
-    DESTINATION share/ru.auroraos.NextcloudFiles/licenses
+    DESTINATION share/${PROJECT_NAME}/licenses
 )
-install(FILES ru.auroraos.NextcloudFiles.desktop
+install(FILES ${PROJECT_NAME}.desktop
     DESTINATION share/applications
 )
 install(DIRECTORY icons/hicolor
@@ -71,7 +71,7 @@ install(DIRECTORY icons/hicolor
 )
 
 file(WRITE "${CMAKE_BINARY_DIR}/QtCreatorDeployment.txt"
-    "${CMAKE_INSTALL_PREFIX}\n${CMAKE_BINARY_DIR}/ru.auroraos.NextcloudFiles:bin\n"
+    "${CMAKE_INSTALL_PREFIX}\n${CMAKE_BINARY_DIR}/${PROJECT_NAME}:bin\n"
 )
 
 add_custom_target(distfiles SOURCES
@@ -79,12 +79,12 @@ add_custom_target(distfiles SOURCES
     LICENSES/UIComponentGallery-BSD-3-Clause.txt
     translations/nextaurocloud_ru.ts
     CMakeLists.txt
-    ru.auroraos.NextcloudFiles.desktop
-    rpm/ru.auroraos.NextcloudFiles.spec
-    icons/hicolor/86x86/apps/ru.auroraos.NextcloudFiles.png
-    icons/hicolor/108x108/apps/ru.auroraos.NextcloudFiles.png
-    icons/hicolor/128x128/apps/ru.auroraos.NextcloudFiles.png
-    icons/hicolor/172x172/apps/ru.auroraos.NextcloudFiles.png
+    ${PROJECT_NAME}.desktop
+    rpm/${PROJECT_NAME}.spec
+    icons/hicolor/86x86/apps/${PROJECT_NAME}.png
+    icons/hicolor/108x108/apps/${PROJECT_NAME}.png
+    icons/hicolor/128x128/apps/${PROJECT_NAME}.png
+    icons/hicolor/172x172/apps/${PROJECT_NAME}.png
     icons/cloud-files.png
     qml/NextcloudFiles.qml
     qml/pages/LoginPage.qml
@@ -100,10 +100,23 @@ add_custom_target(distfiles SOURCES
     tests/securestorage_tests.cpp
     tests/qmlwheel_tests.cpp
     tests/tokenlogin_tests.cpp
+    tests/package_identity_tests.cmake
     tests/qml/wheelfixture.qml
     src/tokenstore.cpp
     src/tokenstore.h
 )
+
+option(BUILD_PACKAGING_TESTS "Check package identity consistency" OFF)
+if(BUILD_PACKAGING_TESTS)
+    enable_testing()
+    add_test(NAME package_identity_tests
+        COMMAND ${CMAKE_COMMAND}
+            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DBINARY_DIR=${CMAKE_BINARY_DIR}"
+            "-DPACKAGE_ID=${PROJECT_NAME}"
+            "-DPACKAGE_VERSION=${PROJECT_VERSION}"
+            -P "${CMAKE_SOURCE_DIR}/tests/package_identity_tests.cmake")
+endif()
 
 option(BUILD_WEBDAV_PARSER_TESTS "Build focused WebDAV parser tests" OFF)
 if(BUILD_WEBDAV_PARSER_TESTS)

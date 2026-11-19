@@ -4,14 +4,14 @@ Name=AuroOo
 Name[ru]=АвроОо
 Comment=Nextcloud file browser
 Comment[ru]=Файловый менеджер Nextcloud
-Icon=ru.auroraos.NextcloudFiles
-Exec=ru.auroraos.NextcloudFiles
+Icon=ru.arpolend.AuroOo
+Exec=/usr/bin/ru.arpolend.AuroOo
 X-Nemo-Application-Type=silica-qt5
 
 [X-Application]
 Permissions=Internet;SecureStorage;UserDirs;MediaIndexing
-OrganizationName=ru.auroraos
-ApplicationName=NextcloudFiles
+OrganizationName=ru.arpolend
+ApplicationName=AuroOo
 
 [X-Aurora-Application]
 Orientation=All

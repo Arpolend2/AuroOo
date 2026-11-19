@@ -11,8 +11,8 @@ int main(int argc, char *argv[])
 {
     QScopedPointer<QGuiApplication> application(
         Aurora::Application::application(argc, argv));
-    application->setOrganizationName(QStringLiteral("ru.auroraos"));
-    application->setApplicationName(QStringLiteral("NextcloudFiles"));
+    application->setOrganizationName(QStringLiteral("ru.arpolend"));
+    application->setApplicationName(QStringLiteral("AuroOo"));
     application->setApplicationVersion(QStringLiteral(APP_VERSION));
     QTranslator translator;
     if (translator.load(QLocale(), QStringLiteral("nextaurocloud"),

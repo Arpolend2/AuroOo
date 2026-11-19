@@ -9,4 +9,5 @@ A fully vibe-coded Nextcloud file manager for Aurora OS.
 - Sign in through Nextcloud; the app token is stored unencrypted in app-private storage.
 - The interface is available in English and Russian.
 - Build: open `CMakeLists.txt` in Aurora IDE and build with an Aurora SDK kit.
+- Package `ru.arpolend.AuroOo` installs separately from `ru.auroraos.NextcloudFiles`: sign in again and select offline files again. Existing app data is not migrated; back up anything needed before removing the old app.
 - Adapted code: [Aurora UI Component Gallery SplitView example](https://hub.mos.ru/auroraos/demos/UIComponentGallery/-/blob/example/qml/pages/SplitViewPage.qml) ([BSD-3-Clause](LICENSES/UIComponentGallery-BSD-3-Clause.txt)).

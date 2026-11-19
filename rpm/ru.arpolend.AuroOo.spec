@@ -1,4 +1,4 @@
-Name:       ru.auroraos.NextcloudFiles
+Name:       ru.arpolend.AuroOo
 Summary:    AuroOo file browser
 Version:    1.3
 Release:    1
