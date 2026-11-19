@@ -1,6 +1,6 @@
 Name:       ru.arpolend.AuroOo
 Summary:    AuroOo file browser
-Version:    1.3
+Version:    1.4
 Release:    1
 Group:      Qt/Qt
 License:    Proprietary

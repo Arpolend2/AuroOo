@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(ru.arpolend.AuroOo VERSION 1.3 LANGUAGES CXX)
+project(ru.arpolend.AuroOo VERSION 1.4 LANGUAGES CXX)
 
 find_package(Qt5 COMPONENTS Core Gui Network Qml Quick DBus REQUIRED)
 find_package(Qt5LinguistTools REQUIRED)

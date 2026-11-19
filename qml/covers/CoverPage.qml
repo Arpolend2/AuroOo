@@ -30,9 +30,12 @@ CoverBackground {
                                        : nextcloudClient.backgroundDownloadProgress[modelData.path]
 
                 Label {
+                    objectName: "coverFileName:" + modelData.path
                     width: parent.width
                     truncationMode: TruncationMode.Fade
-                    font.pixelSize: Theme.fontSizeSmall
+                    textFormat: Text.PlainText
+                    font.family: "monospace"
+                    font.pixelSize: Math.round(Theme.fontSizeExtraSmall * 0.6)
                     color: Theme.primaryColor
                     text: modelData.name
                 }
@@ -85,10 +88,13 @@ CoverBackground {
         }
 
         Label {
+            objectName: "coverEmptyMessage"
             width: parent.width
             visible: !nextcloudClient.authenticated || nextcloudClient.recentFiles.length === 0
             wrapMode: Text.Wrap
-            font.pixelSize: Theme.fontSizeSmall
+            textFormat: Text.PlainText
+            font.family: "monospace"
+            font.pixelSize: Math.round(Theme.fontSizeExtraSmall * 0.6)
             color: Theme.secondaryColor
             text: qsTr("No recent files in saved listings")
         }

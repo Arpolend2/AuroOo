@@ -359,6 +359,21 @@ private slots:
             QStringLiteral("../../qml/covers/CoverPage.qml"))));
         QVERIFY2(cover.status() == QQuickView::Ready, qPrintable(cover.errors().isEmpty()
                  ? QString() : cover.errors().first().toString()));
+        QQmlExpression textSize(qmlContext(cover.rootObject()), cover.rootObject(),
+                                QStringLiteral("Math.round(Theme.fontSizeExtraSmall * 0.6)"));
+        const int expectedSize = textSize.evaluate().toInt();
+        QVERIFY2(!textSize.hasError(), qPrintable(textSize.error().toString()));
+        QVERIFY(expectedSize > 0);
+        QQuickItem *fileName = nullptr;
+        QTRY_VERIFY((fileName = findVisualItem(cover.rootObject(),
+            QStringLiteral("coverFileName:file.txt"))));
+        QQuickItem *emptyMessage = findVisualItem(cover.rootObject(),
+            QStringLiteral("coverEmptyMessage"));
+        QVERIFY(emptyMessage);
+        QCOMPARE(fileName->property("font").value<QFont>().family(), QStringLiteral("monospace"));
+        QCOMPARE(emptyMessage->property("font").value<QFont>().family(), QStringLiteral("monospace"));
+        QCOMPARE(fileName->property("font").value<QFont>().pixelSize(), expectedSize);
+        QCOMPARE(emptyMessage->property("font").value<QFont>().pixelSize(), expectedSize);
         QVERIFY(!cover.rootObject()->findChild<QObject *>(QStringLiteral("syncActions")));
         QVERIFY(!cover.rootObject()->findChild<QObject *>(QStringLiteral("syncAction")));
         QObject *coverAction = cover.rootObject()->property("uploadAction").value<QObject *>();
